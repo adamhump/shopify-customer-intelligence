@@ -332,13 +332,30 @@ Be rigorous. Be probabilistic. Show your work.`;
     // Try to parse JSON from the response
     let analysisData;
     try {
-      // Extract JSON from the response (Claude might wrap it in markdown)
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        analysisData = JSON.parse(jsonMatch[0]);
-      } else {
+      // Extract JSON from the response - find balanced braces to handle extra text after JSON
+      const startIndex = responseText.indexOf('{');
+      if (startIndex === -1) {
         throw new Error('No JSON found in response');
       }
+
+      // Find the matching closing brace by counting braces
+      let braceCount = 0;
+      let endIndex = -1;
+      for (let i = startIndex; i < responseText.length; i++) {
+        if (responseText[i] === '{') braceCount++;
+        if (responseText[i] === '}') braceCount--;
+        if (braceCount === 0) {
+          endIndex = i;
+          break;
+        }
+      }
+
+      if (endIndex === -1) {
+        throw new Error('Unbalanced JSON braces in response');
+      }
+
+      const jsonString = responseText.substring(startIndex, endIndex + 1);
+      analysisData = JSON.parse(jsonString);
     } catch (parseError) {
       console.error('Error parsing Claude response:', parseError);
       return {
