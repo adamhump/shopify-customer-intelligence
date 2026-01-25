@@ -313,12 +313,13 @@ EXAMPLE - Low Confidence, Contextual Only:
   "whatWeMissing": ["LinkedIn profile", "Professional website", "Public social media with location tags", "Name is very common making disambiguation impossible"]
 }
 
-Be rigorous. Be probabilistic. Show your work.`;
+IMPORTANT: Your response must be ONLY valid JSON. Do not include any text before or after the JSON object. Do not use markdown code blocks. Start your response with { and end with }.`;
 
     // Call Claude - using Haiku for reliability (Sonnet not available on this API key)
     const message = await anthropic.messages.create({
       model: 'claude-3-haiku-20240307',
       max_tokens: 2048,
+      system: 'You are a JSON-only response bot. You must respond with valid JSON only, no markdown, no explanations, no text before or after the JSON. Start with { and end with }.',
       messages: [{
         role: 'user',
         content: prompt
