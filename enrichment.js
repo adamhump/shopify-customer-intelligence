@@ -10,37 +10,50 @@ async function callOpenRouter(prompt) {
   const model = process.env.OPENROUTER_MODEL?.trim() || 'moonshotai/kimi-k2.6';
   console.log(`Calling OpenRouter with model: ${model}`);
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      max_tokens: 2048,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a JSON-only response bot. You must respond with valid JSON only, no markdown, no explanations, no text before or after the JSON. Start with { and end with }.'
+  const controller = new AbortController();
+  const timeoutMs = parseInt(process.env.OPENROUTER_TIMEOUT_MS || '20000', 10);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 2048,
+        response_format: { type: 'json_object' },
+        reasoning: {
+          effort: 'none',
+          exclude: true
         },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    })
-  });
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a JSON-only response bot. You must respond with valid JSON only, no markdown, no explanations, no text before or after the JSON. Start with { and end with }.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ]
+      })
+    });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`OpenRouter error ${response.status}: ${body}`);
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`OpenRouter error ${response.status}: ${body}`);
+    }
+
+    const data = await response.json();
+    return data?.choices?.[0]?.message?.content || null;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const data = await response.json();
-  return data?.choices?.[0]?.message?.content || null;
 }
 
 async function callAnthropic(prompt) {
