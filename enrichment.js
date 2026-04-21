@@ -1,6 +1,87 @@
 import Anthropic from '@anthropic-ai/sdk';
 import fetch from 'node-fetch';
 
+async function callOpenRouter(prompt) {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) {
+    return null;
+  }
+
+  const model = process.env.OPENROUTER_MODEL?.trim() || 'moonshotai/kimi-k2.6';
+  console.log(`Calling OpenRouter with model: ${model}`);
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      max_tokens: 2048,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a JSON-only response bot. You must respond with valid JSON only, no markdown, no explanations, no text before or after the JSON. Start with { and end with }.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenRouter error ${response.status}: ${body}`);
+  }
+
+  const data = await response.json();
+  return data?.choices?.[0]?.message?.content || null;
+}
+
+async function callAnthropic(prompt) {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return null;
+  }
+
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  const candidateModels = [
+    process.env.ANTHROPIC_MODEL?.trim(),
+    'claude-haiku-4-5-20251001',
+    'claude-haiku-4-5',
+  ].filter(Boolean);
+
+  let lastError = null;
+  for (const model of candidateModels) {
+    try {
+      console.log(`Calling Anthropic with model: ${model}`);
+      const message = await anthropic.messages.create({
+        model,
+        max_tokens: 2048,
+        system: 'You are a JSON-only response bot. You must respond with valid JSON only, no markdown, no explanations, no text before or after the JSON. Start with { and end with }.',
+        messages: [{
+          role: 'user',
+          content: prompt
+        }]
+      });
+
+      return message.content?.[0]?.text || null;
+    } catch (error) {
+      lastError = error;
+      console.error(`Anthropic request failed for model ${model}:`, error.message);
+    }
+  }
+
+  throw lastError || new Error('Anthropic request failed for all candidate models');
+}
+
 /**
  * Extract email username for adjacent signal searches
  */
@@ -154,9 +235,9 @@ export async function enrichCustomerData(customer) {
 
   console.log(`Enriching data for: ${name} from ${city}, ${state}`);
 
-  // Check if Claude API key is configured
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn('ANTHROPIC_API_KEY not configured. Skipping enrichment.');
+  // Check if at least one LLM provider is configured
+  if (!process.env.OPENROUTER_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    console.warn('No LLM API key configured. Skipping enrichment.');
     return {
       occupation: null,
       age: null,
@@ -167,10 +248,6 @@ export async function enrichCustomerData(customer) {
   }
 
   try {
-    const anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
-
     // Build location string
     const location = city && state ? `${city}, ${state}` : (city || state || '');
 
@@ -315,20 +392,9 @@ EXAMPLE - Low Confidence, Contextual Only:
 
 IMPORTANT: Your response must be ONLY valid JSON. Do not include any text before or after the JSON object. Do not use markdown code blocks. Start your response with { and end with }.`;
 
-    // Call Claude - using Haiku for reliability (Sonnet not available on this API key)
-    const message = await anthropic.messages.create({
-      model: 'claude-3-haiku-20240307',
-      max_tokens: 2048,
-      system: 'You are a JSON-only response bot. You must respond with valid JSON only, no markdown, no explanations, no text before or after the JSON. Start with { and end with }.',
-      messages: [{
-        role: 'user',
-        content: prompt
-      }]
-    });
-
-    // Parse Claude's response
-    const responseText = message.content[0].text;
-    console.log('Claude response (Iteration 2):', responseText);
+    // Prefer OpenRouter/Kimi, with Anthropic as fallback if still configured.
+    const responseText = await callOpenRouter(prompt) || await callAnthropic(prompt);
+    console.log('LLM response (Iteration 2):', responseText);
 
     // Try to parse JSON from the response
     let analysisData;
